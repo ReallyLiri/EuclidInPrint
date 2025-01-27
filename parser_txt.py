@@ -92,12 +92,18 @@ def _parse_catalog_para(texts):
             if l.word_count > 5
         })))
 
+        def _extract_author(text):
+            return text.replace(" ed", "") if text.endswith(" ed") else ""
+
         if any(fmt for fmt in FORMATS if fmt in texts[i].lower()):
             split = texts[i].split(".")
             result["format"] = split[0].strip()
             result["books"] = split[1].strip()
+            result["par"] = _extract_author(split[2].strip())
         else:
-            result["books"] = texts[i].split(".")[0].strip()
+            split = texts[i].split(".")
+            result["books"] = split[0].strip()
+            result["par"] = _extract_author(split[1].strip())
 
         results.append(result)
 
