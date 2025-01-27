@@ -4,7 +4,7 @@ import re
 from docx import Document
 from lingua import LanguageDetectorBuilder, Language
 
-langs =[
+langs = [
     Language.LATIN, Language.FRENCH, Language.GERMAN, Language.GREEK, Language.ARABIC,
     Language.SPANISH, Language.ITALIAN, Language.ENGLISH, Language.DUTCH, Language.CHINESE
 ]
@@ -24,6 +24,40 @@ for i, para in enumerate(doc.paragraphs, 1):
     full_text.append(para.text)
 
 print(f"Extracted {len(full_text)} paragraphs from the document")
+
+FORMATS = ["folio", "octavo", "quarto", "?quarto", "16mo", "duodecimo", "sexto", "octodecimo"]
+POST_TITLE_PREFIXES = ["Colophon:", "Imprint:", "Elements 1–6"]
+
+
+def _has_format(text):
+    return any(fmt for fmt in FORMATS if text.lower().startswith(fmt) or f" {fmt}" in text.lower()) and not "nunc quarto editi" in text
+
+
+def _has_post_title_prefix(text):
+    return any(prefix for prefix in POST_TITLE_PREFIXES if text.startswith(prefix))
+
+
+def _extract_author(text):
+    return text.replace(" ed", "") if text.endswith(" ed") else ""
+
+
+def _dedup_languages(langs):
+    if Language.ENGLISH.name in langs:
+        return [Language.ENGLISH.name]
+    if Language.SPANISH.name in langs and Language.LATIN.name in langs:
+        langs.remove(Language.SPANISH.name)
+    if Language.ENGLISH.name in langs and Language.LATIN.name in langs:
+        langs.remove(Language.ENGLISH.name)
+    if Language.ITALIAN.name in langs and Language.LATIN.name in langs:
+        langs.remove(Language.ITALIAN.name)
+    if Language.DUTCH.name in langs and Language.GERMAN.name in langs:
+        langs.remove(Language.GERMAN.name)
+    if Language.FRENCH.name in langs:
+        for l in langs:
+            if l != Language.FRENCH.name and l != Language.LATIN.name and l != Language.GREEK.name:
+                langs.remove(l)
+    return langs
+
 
 results = []
 
@@ -45,12 +79,6 @@ def _parse_catalog_para(texts):
         result["city"] = key[:year_index].strip()
         result["year"] = re.sub(r'[a-z]+$', '', key[year_index:].strip())
 
-        def _has_format(text):
-            return any(fmt for fmt in FORMATS if text.lower().startswith(fmt) or f" {fmt}" in text.lower()) and not "nunc quarto editi" in text
-
-        def _has_post_title_prefix(text):
-            return any(prefix for prefix in POST_TITLE_PREFIXES if text.startswith(prefix))
-
         def _try_section(i, prefix, prop, early_break):
             if texts[i].startswith(prefix):
                 result[prop] = texts[i].replace(prefix, "").strip()
@@ -65,8 +93,6 @@ def _parse_catalog_para(texts):
             return i
 
         i = 1
-        FORMATS = ["folio", "octavo", "quarto", "?quarto", "16mo", "duodecimo", "sexto", "octodecimo"]
-        POST_TITLE_PREFIXES = ["Colophon:", "Imprint:", "Elements 1–6"]
         for text in texts[1:]:
             if _has_post_title_prefix(text) or _has_format(text):
                 break
@@ -77,23 +103,12 @@ def _parse_catalog_para(texts):
         i = _try_section(i, "Colophon:", "colophon", False)
         i = _try_section(i, "Imprint:", "imprint", False)
 
-        def _dedup_languages(langs):
-            if Language.SPANISH.name in langs and Language.LATIN.name in langs:
-                langs.remove(Language.SPANISH.name)
-            if Language.ENGLISH.name in langs and Language.LATIN.name in langs:
-                langs.remove(Language.ENGLISH.name)
-            if Language.ITALIAN.name in langs and Language.LATIN.name in langs:
-                langs.remove(Language.ITALIAN.name)
-            return langs
-
+        languages = detector.detect_multiple_languages_of("\n".join([result["title"], result["colophon"], result["imprint"]]))
         result["language"] = " and ".join(_dedup_languages(sorted({
             l.language.name for l
-            in detector.detect_multiple_languages_of("\n".join([result["title"], result["colophon"], result["imprint"]]))
-            if l.word_count > 5
+            in languages
+            if l.word_count > 5 or len(languages) == 1
         })))
-
-        def _extract_author(text):
-            return text.replace(" ed", "") if text.endswith(" ed") else ""
 
         if any(fmt for fmt in FORMATS if fmt in texts[i].lower()):
             split = texts[i].split(".")
