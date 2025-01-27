@@ -1,0 +1,12 @@
+[project]
+name = "euclidinprint"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "pdf2image>=1.17.0",
+    "pypdf2>=3.0.1",
+    "pytesseract>=0.3.13",
+    "python-docx>=1.1.2",
+]
