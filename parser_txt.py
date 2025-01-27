@@ -1,6 +1,14 @@
-from docx import Document
-import re
 import csv
+import re
+
+from docx import Document
+from lingua import LanguageDetectorBuilder, Language
+
+langs =[
+    Language.LATIN, Language.FRENCH, Language.GERMAN, Language.GREEK, Language.ARABIC,
+    Language.SPANISH, Language.ITALIAN, Language.ENGLISH, Language.DUTCH, Language.CHINESE
+]
+detector = LanguageDetectorBuilder.from_languages(*langs).build()
 
 entry_start_pattern = r"^([A-Za-zÄÖÜäöüß/\s]+\s)+\d{4}([/\–]\d{2,4})?[a-z]?$"
 
@@ -35,7 +43,7 @@ def _parse_catalog_para(texts):
         year_index = key.index("1")
 
         result["city"] = key[:year_index].strip()
-        result["year"] = key[year_index:].strip()
+        result["year"] = re.sub(r'[a-z]+$', '', key[year_index:].strip())
 
         def _has_format(text):
             return any(fmt for fmt in FORMATS if text.lower().startswith(fmt) or f" {fmt}" in text.lower()) and not "nunc quarto editi" in text
@@ -67,7 +75,22 @@ def _parse_catalog_para(texts):
 
         i = _try_section(i, "Imprint:", "imprint", True)
         i = _try_section(i, "Colophon:", "colophon", False)
-        i = _try_section(i, "Imprint:", "imprint",False)
+        i = _try_section(i, "Imprint:", "imprint", False)
+
+        def _dedup_languages(langs):
+            if Language.SPANISH.name in langs and Language.LATIN.name in langs:
+                langs.remove(Language.SPANISH.name)
+            if Language.ENGLISH.name in langs and Language.LATIN.name in langs:
+                langs.remove(Language.ENGLISH.name)
+            if Language.ITALIAN.name in langs and Language.LATIN.name in langs:
+                langs.remove(Language.ITALIAN.name)
+            return langs
+
+        result["language"] = " and ".join(_dedup_languages(sorted({
+            l.language.name for l
+            in detector.detect_multiple_languages_of("\n".join([result["title"], result["colophon"], result["imprint"]]))
+            if l.word_count > 5
+        })))
 
         if any(fmt for fmt in FORMATS if fmt in texts[i].lower()):
             split = texts[i].split(".")
