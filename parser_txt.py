@@ -1,5 +1,8 @@
 import csv
+import html
+import os
 import re
+from google.cloud import translate_v3
 
 from docx import Document
 from lingua import LanguageDetectorBuilder, Language
@@ -14,6 +17,10 @@ entry_start_pattern = r"^([A-Za-zÄÖÜäöüß/\s]+\s)+\d{4}([/\–]\d{2,4})?[a
 
 input_file_path = "docs/EiP.docx"
 output_file_path = "docs/EiP.csv"
+
+google_project_id = os.environ.get("GOOGLE_PROJECT_ID", "euclid-449115")
+google_credentials_set = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS") is not None
+google_client = translate_v3.TranslationServiceClient() if google_credentials_set else None
 
 print(f"Extracting text from the document: {input_file_path}")
 
@@ -59,6 +66,32 @@ def _dedup_languages(langs):
     return langs
 
 
+def _translate(texts):
+    if not google_client:
+        return [""] * len(texts), ""
+    try:
+        parent = f"projects/{google_project_id}/locations/global"
+        request = {
+            "parent": parent,
+            "contents": [t for t in texts if t != ""],
+            "target_language_code": "en",
+        }
+        response = google_client.translate_text(request=request)
+        translations = response.translations
+        result = []
+        j = 0
+        for t in texts:
+            if t == "":
+                result.append("")
+            else:
+                result.append(html.unescape(translations[j].translated_text))
+                j += 1
+        languages = {t.detected_language_code for t in response.translations}
+        return result, languages
+    except Exception as e:
+        print("!!! Error translating text", e)
+
+
 results = []
 
 
@@ -68,6 +101,9 @@ def _parse_catalog_para(texts):
             "title": "",
             "colophon": "",
             "imprint": "",
+            "title_EN": "",
+            "colophon_EN": "",
+            "imprint_EN": "",
             "format": "",
             "books": ""
         }
@@ -109,6 +145,13 @@ def _parse_catalog_para(texts):
             in languages
             if l.word_count > 5 or len(languages) == 1
         })))
+
+        if result["language"] != Language.ENGLISH.name:
+            translations, languages = (
+                _translate([result["title"], result["colophon"], result["imprint"]])
+            )
+            result["title_EN"], result["colophon_EN"], result["imprint_EN"] = translations
+            result["language_v2"] = " and ".join(languages)
 
         if any(fmt for fmt in FORMATS if fmt in texts[i].lower()):
             split = texts[i].split(".")

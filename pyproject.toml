@@ -5,6 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "google-cloud-translate>=3.19.0",
     "lingua-language-detector>=1.4.0",
     "python-docx>=1.1.2",
 ]
