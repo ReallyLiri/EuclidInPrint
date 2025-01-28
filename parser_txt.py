@@ -3,6 +3,7 @@ import html
 import os
 import re
 from google.cloud import translate_v3
+from openai import OpenAI
 
 from docx import Document
 from lingua import LanguageDetectorBuilder, Language
@@ -21,6 +22,11 @@ output_file_path = "docs/EiP.csv"
 google_project_id = os.environ.get("GOOGLE_PROJECT_ID", "euclid-449115")
 google_credentials_set = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS") is not None
 google_client = translate_v3.TranslationServiceClient() if google_credentials_set else None
+
+openai_api_key = os.environ.get("OPENAI_API_KEY")
+openai_client = OpenAI(
+    api_key=openai_api_key
+) if openai_api_key else None
 
 print(f"Extracting text from the document: {input_file_path}")
 
@@ -92,6 +98,27 @@ def _translate(texts):
         print("!!! Error translating text", e)
 
 
+def _query_openai(question, text, instructions, max_tokens=50, creativity=0):
+    if not openai_client:
+        return ""
+    try:
+        response = openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": instructions},
+                {"role": "user", "content": question},
+                {"role": "user", "content": text},
+            ],
+            max_tokens=max_tokens,
+            temperature=creativity
+        )
+        if len(response.choices) != 1:
+            print("!!! Unexpected response from OpenAI", response)
+        return response.choices[0].message.content
+    except Exception as e:
+        print("!!! Error querying OpenAI", e)
+
+
 results = []
 
 
@@ -104,6 +131,7 @@ def _parse_catalog_para(texts):
             "title_EN": "",
             "colophon_EN": "",
             "imprint_EN": "",
+            "publisher": "",
             "format": "",
             "books": ""
         }
@@ -139,7 +167,8 @@ def _parse_catalog_para(texts):
         i = _try_section(i, "Colophon:", "colophon", False)
         i = _try_section(i, "Imprint:", "imprint", False)
 
-        languages = detector.detect_multiple_languages_of("\n".join([result["title"], result["colophon"], result["imprint"]]))
+        joined_body = "\n".join([result["title"], result["colophon"], result["imprint"]])
+        languages = detector.detect_multiple_languages_of(joined_body)
         result["language"] = " and ".join(_dedup_languages(sorted({
             l.language.name for l
             in languages
@@ -152,6 +181,14 @@ def _parse_catalog_para(texts):
             )
             result["title_EN"], result["colophon_EN"], result["imprint_EN"] = translations
             result["language_v2"] = " and ".join(languages)
+
+        publisher = _query_openai(
+            "Who is the publisher mentioned in this title page?",
+            joined_body,
+            "Answer only with a de-latinized name or UNKNOWN if publisher is not mentioned."
+        )
+        if publisher != "UNKNOWN":
+            result["publisher"] = publisher
 
         if any(fmt for fmt in FORMATS if fmt in texts[i].lower()):
             split = texts[i].split(".")
