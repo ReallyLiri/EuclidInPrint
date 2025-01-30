@@ -11,3 +11,5 @@ wheels/
 
 credentials.json
 openai.key
+
+**/*.csv
