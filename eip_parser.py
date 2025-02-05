@@ -1,12 +1,9 @@
-import csv
-import html
-import os
 import re
-from google.cloud import translate_v3
-from openai import OpenAI
 
 from docx import Document
 from lingua import LanguageDetectorBuilder, Language
+
+from tools import write_csv
 
 langs = [
     Language.LATIN, Language.FRENCH, Language.GERMAN, Language.GREEK, Language.ARABIC,
@@ -18,15 +15,6 @@ entry_start_pattern = r"^([A-Za-zÄÖÜäöüß/\s]+\s)+\d{4}([/\–]\d{2,4})?[a
 
 input_file_path = "docs/EiP.docx"
 output_file_path = "docs/EiP.csv"
-
-google_project_id = os.environ.get("GOOGLE_PROJECT_ID", "euclid-449115")
-google_credentials_set = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS") is not None
-google_client = translate_v3.TranslationServiceClient() if google_credentials_set else None
-
-openai_api_key = os.environ.get("OPENAI_API_KEY")
-openai_client = OpenAI(
-    api_key=openai_api_key
-) if openai_api_key else None
 
 print(f"Extracting text from the document: {input_file_path}")
 
@@ -70,53 +58,6 @@ def _dedup_languages(langs):
             if l != Language.FRENCH.name and l != Language.LATIN.name and l != Language.GREEK.name:
                 langs.remove(l)
     return langs
-
-
-def _translate(texts):
-    if not google_client:
-        return [""] * len(texts), ""
-    try:
-        parent = f"projects/{google_project_id}/locations/global"
-        request = {
-            "parent": parent,
-            "contents": [t for t in texts if t != ""],
-            "target_language_code": "en",
-        }
-        response = google_client.translate_text(request=request)
-        translations = response.translations
-        result = []
-        j = 0
-        for t in texts:
-            if t == "":
-                result.append("")
-            else:
-                result.append(html.unescape(translations[j].translated_text))
-                j += 1
-        languages = {t.detected_language_code for t in response.translations}
-        return result, languages
-    except Exception as e:
-        print("!!! Error translating text", e)
-
-
-def _query_openai(question, text, instructions, max_tokens=50, creativity=0):
-    if not openai_client:
-        return ""
-    try:
-        response = openai_client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": instructions},
-                {"role": "user", "content": question},
-                {"role": "user", "content": text},
-            ],
-            max_tokens=max_tokens,
-            temperature=creativity
-        )
-        if len(response.choices) != 1:
-            print("!!! Unexpected response from OpenAI", response)
-        return response.choices[0].message.content
-    except Exception as e:
-        print("!!! Error querying OpenAI", e)
 
 
 results = []
@@ -175,21 +116,6 @@ def _parse_catalog_para(texts):
             if l.word_count > 5 or len(languages) == 1
         })))
 
-        if result["language"] != Language.ENGLISH.name:
-            translations, languages = (
-                _translate([result["title"], result["colophon"], result["imprint"]])
-            )
-            result["title_EN"], result["colophon_EN"], result["imprint_EN"] = translations
-            result["language_v2"] = " and ".join(languages)
-
-        publisher = _query_openai(
-            "Who is the publisher mentioned in this title page?",
-            joined_body,
-            "Answer only with a de-latinized name or UNKNOWN if publisher is not mentioned."
-        )
-        if publisher != "UNKNOWN":
-            result["publisher"] = publisher
-
         if any(fmt for fmt in FORMATS if fmt in texts[i].lower()):
             split = texts[i].split(".")
             result["format"] = split[0].strip()
@@ -228,8 +154,5 @@ for i, para in enumerate(full_text, 1):
         else:
             current_entry.append(para)
 
-with open(output_file_path, mode="w", newline="", encoding="utf-8") as f:
-    writer = csv.DictWriter(f, fieldnames=results[0].keys())
-    writer.writeheader()
-    for row in results:
-        writer.writerow(row)
+
+write_csv(results, output_file_path)
